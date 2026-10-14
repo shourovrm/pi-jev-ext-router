@@ -1,0 +1,49 @@
+{
+  "name": "pi-jev-ext-router",
+  "version": "0.1.0",
+  "description": "Pi extension that asks Jev (typesafe/jev via OpenRouter) which lazy extension a prompt needs and activates it through pi-lazy-extensions before the model turn starts.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Riad Mashrub Shourov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shourovrm/pi-jev-ext-router.git"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "jev",
+    "router",
+    "lazy",
+    "extension",
+    "coding-agent"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "files": [
+    "index.ts",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "check": "biome check ."
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.0",
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@types/node": "^25.0.0",
+    "typescript": "^6.0.0",
+    "vitest": "^4.0.0"
+  }
+}
