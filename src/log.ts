@@ -6,6 +6,8 @@ import { dirname, join } from "node:path";
 export interface LogEntry {
 	timestamp: string;
 	skipped?: string;
+	/** The cue that sent the prompt to Jev, or that matched before an "already active" skip. */
+	cue?: string;
 	choice?: string;
 	probabilities?: Record<string, number>;
 	confidence?: number;
@@ -17,9 +19,14 @@ export interface LogEntry {
 	error?: string;
 }
 
-export function logFilePath(): string {
+/** Files the router writes for itself live under $XDG_STATE_HOME/jev-ext-router. */
+export function stateFilePath(fileName: string): string {
 	const stateHome = process.env.XDG_STATE_HOME || join(homedir(), ".local", "state");
-	return join(stateHome, "jev-ext-router", "log.jsonl");
+	return join(stateHome, "jev-ext-router", fileName);
+}
+
+export function logFilePath(): string {
+	return stateFilePath("log.jsonl");
 }
 
 export function appendLog(entry: LogEntry, path: string = logFilePath()): void {

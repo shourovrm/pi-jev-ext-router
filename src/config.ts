@@ -22,6 +22,10 @@ export interface RouterConfig {
 	keyFile: string;
 	/** Lazy extension names that Jev is never offered. */
 	exclude: string[];
+	/** Only ask Jev when the prompt contains a cue word (see src/cues.ts); off sends every prompt. */
+	cueGate: boolean;
+	/** Extra cue words or phrases, added to the built-in list and the manifest's extension names. */
+	extraCues: string[];
 }
 
 export const DEFAULT_CONFIG: RouterConfig = {
@@ -34,6 +38,8 @@ export const DEFAULT_CONFIG: RouterConfig = {
 	model: "typesafe/jev-1.13",
 	keyFile: "~/.config/jev/openrouter.env",
 	exclude: [],
+	cueGate: true,
+	extraCues: [],
 };
 
 export const CONFIG_FILE_NAME = "jev-ext-router.json";

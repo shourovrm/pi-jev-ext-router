@@ -11,20 +11,9 @@ export interface LazyExtensionEntry {
 
 export interface LazyManifest {
 	extensions: LazyExtensionEntry[];
-	/** pi-lazy-extensions unloads an idle extension after this many minutes; 0 means never. */
-	idleTimeoutMinutes: number;
 }
 
 export const NONE_OPTION = "none";
-
-/** pi-lazy-extensions' own default when the manifest does not set `settings.idleTimeout`. */
-const DEFAULT_IDLE_TIMEOUT_MINUTES = 10;
-
-/** How long an activation is known to stay loaded without any further tool use. */
-export function idleWindowMsOf(manifest: LazyManifest): number {
-	if (manifest.idleTimeoutMinutes <= 0) return Number.POSITIVE_INFINITY;
-	return manifest.idleTimeoutMinutes * 60_000;
-}
 
 /**
  * Same search order as pi-lazy-extensions, so both read the same file:
@@ -51,16 +40,11 @@ export function loadManifest(path: string): LazyManifest {
 		const reason = error instanceof Error ? error.message : String(error);
 		throw new Error(`jev-ext-router: cannot parse lazy manifest ${path}: ${reason}`);
 	}
-	const manifest = parsed as { extensions?: unknown; settings?: { idleTimeout?: unknown } } | null;
-	const extensions = manifest?.extensions;
+	const extensions = (parsed as { extensions?: unknown } | null)?.extensions;
 	if (!Array.isArray(extensions)) {
 		throw new Error(`jev-ext-router: ${path} has no "extensions" array`);
 	}
-	const idleTimeout = manifest?.settings?.idleTimeout;
-	return {
-		extensions: extensions as LazyExtensionEntry[],
-		idleTimeoutMinutes: typeof idleTimeout === "number" ? idleTimeout : DEFAULT_IDLE_TIMEOUT_MINUTES,
-	};
+	return { extensions: extensions as LazyExtensionEntry[] };
 }
 
 /**

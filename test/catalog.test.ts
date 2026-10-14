@@ -2,10 +2,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildOptions, findManifestPath, idleWindowMsOf, loadManifest, NONE_OPTION } from "../src/catalog.ts";
+import { buildOptions, findManifestPath, loadManifest, NONE_OPTION } from "../src/catalog.ts";
 
 const manifest = {
-	idleTimeoutMinutes: 10,
 	extensions: [
 		{ name: "web", description: "Web search.", tags: ["web", "search"], lifecycle: "lazy" as const },
 		{ name: "fetch", description: "Fetch a URL." },
@@ -52,18 +51,6 @@ describe("manifest discovery", () => {
 
 	it("returns undefined when nothing exists", () => {
 		expect(findManifestPath(makeDir(), makeDir())).toBeUndefined();
-	});
-
-	it("reads the loader's idle timeout, defaulting to ten minutes", () => {
-		const dir = makeDir();
-		const path = join(dir, "lazy-extensions.json");
-		writeFileSync(path, JSON.stringify({ extensions: [], settings: { idleTimeout: 3 } }));
-		expect(loadManifest(path).idleTimeoutMinutes).toBe(3);
-		expect(idleWindowMsOf(loadManifest(path))).toBe(180_000);
-
-		writeFileSync(path, JSON.stringify({ extensions: [] }));
-		expect(loadManifest(path).idleTimeoutMinutes).toBe(10);
-		expect(idleWindowMsOf({ extensions: [], idleTimeoutMinutes: 0 })).toBe(Number.POSITIVE_INFINITY);
 	});
 
 	it("rejects a manifest without an extensions array", () => {

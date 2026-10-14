@@ -8,12 +8,14 @@
  */
 
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { buildOptions, findManifestPath, idleWindowMsOf, loadManifest, NONE_OPTION } from "./src/catalog.ts";
+import { buildOptions, findManifestPath, loadManifest, NONE_OPTION } from "./src/catalog.ts";
 import { CONFIG_FILE_NAME, loadConfig, type RouterConfig, resolveApiKey } from "./src/config.ts";
+import { buildCueList, cueGroup, DEFAULT_CUES, findCue } from "./src/cues.ts";
 import { chooseActivations } from "./src/decision.ts";
 import { skipReason } from "./src/filter.ts";
 import { askJev, type JevDecision } from "./src/jev.ts";
-import { appendLog, logFilePath } from "./src/log.ts";
+import { ToolLedger } from "./src/ledger.ts";
+import { appendLog, logFilePath, stateFilePath } from "./src/log.ts";
 
 const STATE_ENTRY_TYPE = "jev-ext-router-state";
 
@@ -36,7 +38,10 @@ export default function jevExtRouter(pi: ExtensionAPI) {
 	let enabled = false;
 	let manifestPath: string | undefined;
 	let options: Record<string, string> = {};
-	let idleWindowMs = Number.POSITIVE_INFINITY;
+	let cues: string[] = [];
+	const ledger = new ToolLedger(stateFilePath("tools.json"));
+	/** Extensions Jev picked for each cue group in this session, so a related cue can skip Jev while they stay loaded. */
+	const cueChoices = new Map<string, string[]>();
 
 	const report = (ctx: ExtensionContext, message: string, level: "info" | "warning" | "error" = "info") => {
 		if (ctx.hasUI) {
@@ -71,16 +76,18 @@ export default function jevExtRouter(pi: ExtensionAPI) {
 		manifestPath = findManifestPath(ctx.cwd, agentDir);
 		if (!manifestPath) {
 			options = {};
-			idleWindowMs = Number.POSITIVE_INFINITY;
+			cues = buildCueList(DEFAULT_CUES, [], config.extraCues);
 			return;
 		}
 		const manifest = loadManifest(manifestPath);
 		options = buildOptions(manifest, config.exclude);
-		idleWindowMs = idleWindowMsOf(manifest);
+		const offered = manifest.extensions.filter((entry) => entry.name in options);
+		cues = buildCueList(DEFAULT_CUES, offered, config.extraCues);
 	};
 
 	const restore = (ctx: ExtensionContext) => {
 		refreshCatalog(ctx);
+		cueChoices.clear();
 		const startOn = pi.getFlag("jev-router") === true || config.defaultEnabled;
 		enabled = savedState(ctx) ?? startOn;
 		updateStatus(ctx);
@@ -95,41 +102,41 @@ export default function jevExtRouter(pi: ExtensionAPI) {
 
 	const lazyLoaderPresent = () => pi.getCommands().some((command) => command.name === LAZY_COMMAND);
 
-	/** When each extension was last activated here, so a repeat within the loader's idle window skips the wait. */
-	const activatedAt = new Map<string, number>();
-
-	const toolSignature = () =>
-		`${pi
-			.getAllTools()
-			.map((tool) => tool.name)
-			.sort()
-			.join("\n")}|${pi.getActiveTools().length}`;
+	const activeToolSet = (): Set<string> => new Set(pi.getActiveTools());
 
 	const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+	/** Extensions often register several tools in a row; give the rest a moment after the first appears. */
+	const REGISTRATION_SETTLE_MS = 60;
 
 	/**
 	 * pi-lazy-extensions keeps its registry private; its `/ext activate` command is the
 	 * only entry point another extension can reach. sendUserMessage runs slash commands
 	 * before anything else and never prompts the model for them, but the extension-facing
-	 * wrapper drops the returned promise, so completion is observed by watching the tool
-	 * registry change instead. A repeat activation inside the loader's idle window is a
-	 * no-op on its side, so there is nothing to wait for.
+	 * wrapper drops the returned promise, so completion is observed by watching pi's
+	 * active tool list grow. The tools that appear are recorded in the ledger, which
+	 * then answers "is it still loaded" for later prompts.
 	 */
-	const activate = async (name: string): Promise<"loaded" | "already-loaded" | "no-change"> => {
-		const loadedRecently = Date.now() - (activatedAt.get(name) ?? Number.NEGATIVE_INFINITY) < idleWindowMs;
-		const before = toolSignature();
+	const activate = async (name: string): Promise<"loaded" | "already-active" | "no-change"> => {
+		if (ledger.isActive(name, activeToolSet())) return "already-active";
+
+		const before = activeToolSet();
 		pi.sendUserMessage(`/${LAZY_COMMAND} activate ${name}`, { expandPromptTemplates: true });
-		activatedAt.set(name, Date.now());
-		if (loadedRecently) return "already-loaded";
 
 		const deadline = Date.now() + config.activationWaitMs;
 		while (Date.now() < deadline) {
 			await sleep(15);
-			if (toolSignature() !== before) return "loaded";
+			if ([...activeToolSet()].some((tool) => !before.has(tool))) {
+				await sleep(REGISTRATION_SETTLE_MS);
+				ledger.record(
+					name,
+					[...activeToolSet()].filter((tool) => !before.has(tool)),
+				);
+				return "loaded";
+			}
 		}
-		// Either the extension was already loaded by the model's own `ext` call, or the
-		// loader failed (a stale manifest path is the usual cause) and only told the UI.
-		activatedAt.delete(name);
+		// Either the model loaded it earlier through `ext` before the ledger knew its tools,
+		// or the loader failed (a stale manifest path is the usual cause) and only told the UI.
 		return "no-change";
 	};
 
@@ -143,16 +150,11 @@ export default function jevExtRouter(pi: ExtensionAPI) {
 		const lines: string[] = [];
 		for (const name of Object.keys(options)) {
 			if (name === NONE_OPTION) continue;
-			const toolsBefore = new Set(pi.getAllTools().map((tool) => tool.name));
-			activatedAt.delete(name);
 			const outcome = await activate(name);
-			const added = pi
-				.getAllTools()
-				.map((tool) => tool.name)
-				.filter((toolName) => !toolsBefore.has(toolName));
+			const loaded = ledger.isActive(name, activeToolSet());
 			lines.push(
-				added.length > 0
-					? `${name}: ${added.length} new tool(s): ${added.join(", ")}`
+				loaded
+					? `${name}: ${ledger.toolsOf(name).join(", ")} (${outcome})`
 					: `${name}: no new tools (${outcome}); check its manifest path, or load it eagerly if it registers tools in session_start`,
 			);
 		}
@@ -183,7 +185,7 @@ export default function jevExtRouter(pi: ExtensionAPI) {
 		return `${ranked} (${decision.elapsedMs} ms, $${decision.costUsd.toFixed(6)})`;
 	};
 
-	const routePrompt = async (text: string, ctx: ExtensionContext) => {
+	const routePrompt = async (text: string, cue: string | undefined, ctx: ExtensionContext) => {
 		if (!lazyLoaderPresent()) {
 			report(ctx, "jev-router: pi-lazy-extensions is not loaded, nothing to activate", "warning");
 			return;
@@ -196,7 +198,7 @@ export default function jevExtRouter(pi: ExtensionAPI) {
 			debug(`Jev answered ${decision.answer.choice} in ${decision.elapsedMs} ms`);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			appendLog({ timestamp: new Date().toISOString(), error: message });
+			appendLog({ timestamp: new Date().toISOString(), cue, error: message });
 			report(ctx, `jev-router: ${message}; continuing without routing`, "warning");
 			return;
 		}
@@ -207,6 +209,7 @@ export default function jevExtRouter(pi: ExtensionAPI) {
 			debug(`activating ${name}`);
 			if ((await activate(name)) === "no-change") unchanged.push(name);
 		}
+		if (cue && activated.length > 0) cueChoices.set(cueGroup(cue), activated);
 		if (unchanged.length > 0) {
 			report(
 				ctx,
@@ -217,6 +220,7 @@ export default function jevExtRouter(pi: ExtensionAPI) {
 
 		appendLog({
 			timestamp: new Date().toISOString(),
+			cue,
 			choice: decision.answer.choice,
 			probabilities: decision.answer.probabilities,
 			confidence: decision.answer.confidence,
@@ -277,6 +281,8 @@ export default function jevExtRouter(pi: ExtensionAPI) {
 						`jev-router: ${enabled ? "on" : "off"} (default ${config.defaultEnabled ? "on" : "off"}, config ${CONFIG_FILE_NAME})`,
 						`manifest: ${manifestPath ?? "none found"} · ${Math.max(0, Object.keys(options).length - 1)} lazy extensions offered`,
 						`lazy loader command /${LAZY_COMMAND}: ${lazyLoaderPresent() ? "present" : "missing"}`,
+						`cue gate: ${config.cueGate ? `on, ${cues.length} cues` : "off, every prompt goes to Jev"}`,
+						`tool ledger: ${stateFilePath("tools.json")}`,
 						`log: ${logFilePath()}`,
 					];
 					report(ctx, lines.join("\n"));
@@ -300,8 +306,29 @@ export default function jevExtRouter(pi: ExtensionAPI) {
 			return { action: "continue" };
 		}
 
-		debug("input received");
-		await routePrompt(event.text, ctx);
+		let cue: string | undefined;
+		if (config.cueGate) {
+			cue = findCue(event.text, cues);
+			if (!cue) {
+				debug("no tool cue, not asking Jev");
+				appendLog({ timestamp: new Date().toISOString(), skipped: "no tool cue" });
+				return { action: "continue" };
+			}
+			const earlier = cueChoices.get(cueGroup(cue));
+			if (earlier && ledger.allActive(earlier, activeToolSet())) {
+				debug(`cue "${cue}" already served by ${earlier.join(", ")}, not asking Jev`);
+				appendLog({
+					timestamp: new Date().toISOString(),
+					skipped: "already active",
+					cue,
+					activated: earlier,
+				});
+				return { action: "continue" };
+			}
+		}
+
+		debug(`input received${cue ? `, cue "${cue}"` : ""}`);
+		await routePrompt(event.text, cue, ctx);
 		debug("input handler done");
 		return { action: "continue" };
 	});
