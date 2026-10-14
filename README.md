@@ -50,7 +50,7 @@ Settings live in `<agent-dir>/jev-ext-router.json`, which is `~/.pi/agent/jev-ex
   "defaultEnabled": false,
   "minProbability": 0.35,
   "maxActivations": 2,
-  "timeoutMs": 1500,
+  "timeoutMs": 3000,
   "activationWaitMs": 2000,
   "minPromptLength": 8,
   "model": "typesafe/jev-1.13",
@@ -61,7 +61,7 @@ Settings live in `<agent-dir>/jev-ext-router.json`, which is `~/.pi/agent/jev-ex
 
 `minProbability` is the gate for activation. Jev returns a probability for every extension in the manifest plus a `none` option, and every extension at or above the gate is activated, up to `maxActivations` of them, highest probability first. The gate is a probability rather than Jev's summary confidence on purpose: a prompt such as "search for the release notes and read the page" splits its mass between a search extension and a fetch extension, which looks unsure to a confidence threshold but is two correct activations.
 
-`timeoutMs` bounds how long a prompt waits on Jev. When Jev does not answer in time, or returns an error, the prompt goes through unrouted and a warning names the reason.
+`timeoutMs` bounds how long a prompt waits on Jev. Jev answers in about 0.6 s when called on its own, but the first routed prompt of a session shares the event loop with extensions that are still starting, and measured 1.3 to 1.6 s there, so the default leaves room for that. When Jev does not answer in time, or returns an error, the prompt goes through unrouted and a warning names the reason.
 
 `activationWaitMs` bounds how long the router waits for pi-lazy-extensions to finish loading one extension. Pi's extension API does not return the loader's completion, so the router watches the tool registry for the new tools and moves on as soon as they appear. A repeat activation inside the loader's `idleTimeout` window is known to be a no-op and is not waited for at all.
 
@@ -77,6 +77,22 @@ A prompt such as `find the current npm version of vitest` goes through four step
 4. The prompt continues unchanged into the normal turn. The `ext` proxy tool stays available as the fallback for anything Jev missed.
 
 Each decision appends one line to `~/.local/state/jev-ext-router/log.jsonl` (or `$XDG_STATE_HOME/jev-ext-router/log.jsonl`) with the chosen option, the probabilities, what was activated, the cost and the elapsed time. The prompt text is never written to the log.
+
+## Debugging
+
+Set `JEV_ROUTER_DEBUG=1` to print each routing stage with elapsed milliseconds on stderr:
+
+```sh
+JEV_ROUTER_DEBUG=1 pi -p "fetch https://example.com and give me the title"
+```
+
+```text
+[jev-router +286ms] input received
+[jev-router +287ms] asking Jev
+[jev-router +1640ms] Jev answered webfetch in 1353 ms
+[jev-router +1641ms] activating webfetch
+[jev-router +1717ms] input handler done
+```
 
 ## Privacy and cost
 

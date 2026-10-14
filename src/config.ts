@@ -28,7 +28,7 @@ export const DEFAULT_CONFIG: RouterConfig = {
 	defaultEnabled: false,
 	minProbability: 0.35,
 	maxActivations: 2,
-	timeoutMs: 1500,
+	timeoutMs: 3000,
 	activationWaitMs: 2000,
 	minPromptLength: 8,
 	model: "typesafe/jev-1.13",

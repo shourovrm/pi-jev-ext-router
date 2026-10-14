@@ -16,6 +16,13 @@ import { askJev, type JevDecision } from "./src/jev.ts";
 import { appendLog, logFilePath } from "./src/log.ts";
 
 const STATE_ENTRY_TYPE = "jev-ext-router-state";
+
+/** Set JEV_ROUTER_DEBUG=1 to trace each routing stage on stderr with elapsed milliseconds. */
+const debugEnabled = process.env.JEV_ROUTER_DEBUG === "1";
+const debugStart = Date.now();
+const debug = (message: string) => {
+	if (debugEnabled) console.error(`[jev-router +${Date.now() - debugStart}ms] ${message}`);
+};
 const STATUS_KEY = "jev-ext-router";
 const LAZY_COMMAND = "ext";
 
@@ -184,7 +191,9 @@ export default function jevExtRouter(pi: ExtensionAPI) {
 
 		let decision: JevDecision;
 		try {
+			debug("asking Jev");
 			decision = await decide(text);
+			debug(`Jev answered ${decision.answer.choice} in ${decision.elapsedMs} ms`);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			appendLog({ timestamp: new Date().toISOString(), error: message });
@@ -195,6 +204,7 @@ export default function jevExtRouter(pi: ExtensionAPI) {
 		const activated = chooseActivations(decision.answer, config.minProbability, config.maxActivations);
 		const unchanged: string[] = [];
 		for (const name of activated) {
+			debug(`activating ${name}`);
 			if ((await activate(name)) === "no-change") unchanged.push(name);
 		}
 		if (unchanged.length > 0) {
@@ -290,7 +300,9 @@ export default function jevExtRouter(pi: ExtensionAPI) {
 			return { action: "continue" };
 		}
 
+		debug("input received");
 		await routePrompt(event.text, ctx);
+		debug("input handler done");
 		return { action: "continue" };
 	});
 }
